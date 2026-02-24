@@ -82,6 +82,10 @@ let spawnCount = 0;
 let hasJoinedTargetServer = false;
 const onlinePlayers = new Set();
 
+function nowStamp() {
+  return new Date().toLocaleTimeString('ru-RU', { hour12: false });
+}
+
 function tryFixJsonLikePayload(raw) {
   const normalized = raw.replace(/([,{]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
   JSON.parse(normalized);
@@ -108,7 +112,6 @@ function sanitizeSkinPropertiesInPlayerInfoPacket(packet) {
         try {
           const fixed = tryFixJsonLikePayload(decoded);
           prop.value = Buffer.from(fixed, 'utf8').toString('base64');
-          console.log('🩹 Исправлен некорректный JSON в textures у player_info пакета');
         } catch (_fixError) {
           // keep original value; global handlers below still protect process
         }
@@ -196,7 +199,7 @@ function scheduleReconnect(reason) {
 function setupDiscordBridge() {
   if (!discordClient) return;
 
-  discordClient.once('ready', () => {
+  discordClient.once('clientReady', () => {
     console.log(`🤖 Discord bot запущен как ${discordClient.user.tag}`);
   });
 
@@ -210,7 +213,6 @@ function setupDiscordBridge() {
 
     try {
       bot.chat(text);
-      console.log(`💬 [Discord -> MC] ${msg.author.username}: ${text}`);
     } catch (error) {
       console.warn(`⚠️ Ошибка отправки из Discord в MC: ${error.message}`);
     }
@@ -248,6 +250,7 @@ function createBot() {
 
   bot.once('login', () => {
     console.log(`✅ Успешный вход в Minecraft как ${cfg.mcUsername}`);
+    sendDiscord(`🟢 Бот зашел [${nowStamp()}]`);
   });
 
   if (bot._client?.prependListener) {
@@ -273,7 +276,7 @@ function createBot() {
     if (!text) return;
 
     console.log(`[MC] ${text}`);
-    sendDiscord(`📨 ${text}`);
+    sendDiscord(`✉️ [${nowStamp()}] ${text}`);
 
     if (!hasJoinedTargetServer && shouldTryJoinServer(text)) {
       joinTargetServer('detected_lobby');
@@ -289,7 +292,7 @@ function createBot() {
     if (username === bot.username) return;
     const line = `💬 ${username}: ${message}`;
     console.log(line);
-    sendDiscord(line);
+    sendDiscord(`✉️ [${nowStamp()}] ${line}`);
   });
 
   bot.on('playerJoined', (player) => {
@@ -314,6 +317,7 @@ function createBot() {
 
   bot.on('end', (reason) => {
     console.warn(`⚠️ Соединение завершено: ${reason}`);
+    sendDiscord(`🔴 Бот отключился [${nowStamp()}] Причина: ${reason}`);
     scheduleReconnect('end');
   });
 }
