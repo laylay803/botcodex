@@ -82,6 +82,41 @@ let spawnCount = 0;
 let hasJoinedTargetServer = false;
 const onlinePlayers = new Set();
 
+function tryFixJsonLikePayload(raw) {
+  const normalized = raw.replace(/([,{]\s*)([A-Za-z0-9_]+)\s*:/g, '$1"$2":');
+  JSON.parse(normalized);
+  return normalized;
+}
+
+function sanitizeSkinPropertiesInPlayerInfoPacket(packet) {
+  const entries = Array.isArray(packet?.data) ? packet.data : [];
+  for (const entry of entries) {
+    const props = Array.isArray(entry?.properties) ? entry.properties : [];
+    for (const prop of props) {
+      if (!prop || prop.name !== 'textures' || typeof prop.value !== 'string') continue;
+
+      let decoded;
+      try {
+        decoded = Buffer.from(prop.value, 'base64').toString('utf8');
+      } catch (_error) {
+        continue;
+      }
+
+      try {
+        JSON.parse(decoded);
+      } catch (_error) {
+        try {
+          const fixed = tryFixJsonLikePayload(decoded);
+          prop.value = Buffer.from(fixed, 'utf8').toString('base64');
+          console.log('🩹 Исправлен некорректный JSON в textures у player_info пакета');
+        } catch (_fixError) {
+          // keep original value; global handlers below still protect process
+        }
+      }
+    }
+  }
+}
+
 function forceReconnect(reason) {
   if (bot) {
     try {
@@ -214,6 +249,12 @@ function createBot() {
   bot.once('login', () => {
     console.log(`✅ Успешный вход в Minecraft как ${cfg.mcUsername}`);
   });
+
+  if (bot._client?.prependListener) {
+    bot._client.prependListener('player_info', (packet) => {
+      sanitizeSkinPropertiesInPlayerInfoPacket(packet);
+    });
+  }
 
   bot.once('spawn', () => {
     spawnCount += 1;
