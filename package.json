@@ -1,0 +1,17 @@
+{
+  "name": "masedworld-mc-bot",
+  "version": "1.0.0",
+  "description": "Minecraft 1.12.2 relay bot with auto-reconnect, Telegram alerts, and Discord bridge",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "check": "node --check index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "mineflayer": "^4.23.0",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
