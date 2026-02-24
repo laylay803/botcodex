@@ -20,7 +20,6 @@ const cfg = {
 
   discordToken: process.env.DISCORD_TOKEN,
   discordChannelId: process.env.DISCORD_CHANNEL_ID,
-  discordPrefix: process.env.DISCORD_PREFIX || '[DC]',
 
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
@@ -82,6 +81,17 @@ let stdinInterface = null;
 let spawnCount = 0;
 let hasJoinedTargetServer = false;
 const onlinePlayers = new Set();
+
+function forceReconnect(reason) {
+  if (bot) {
+    try {
+      bot.quit(reason);
+    } catch (_error) {
+      // ignore and fallback to end
+    }
+  }
+  scheduleReconnect(reason);
+}
 
 async function sendDiscord(text) {
   if (!discordClient || !cfg.discordChannelId) return;
@@ -160,12 +170,12 @@ function setupDiscordBridge() {
     if (msg.channelId !== cfg.discordChannelId) return;
     if (!bot) return;
 
-    const text = `${cfg.discordPrefix} ${msg.author.username}: ${msg.content}`.trim();
-    if (!msg.content.trim()) return;
+    const text = msg.content.trim();
+    if (!text) return;
 
     try {
       bot.chat(text);
-      console.log(`💬 [Discord -> MC] ${text}`);
+      console.log(`💬 [Discord -> MC] ${msg.author.username}: ${text}`);
     } catch (error) {
       console.warn(`⚠️ Ошибка отправки из Discord в MC: ${error.message}`);
     }
@@ -269,4 +279,27 @@ function createBot() {
 
 setupTerminalInput();
 setupDiscordBridge();
+
+process.on('uncaughtException', (error) => {
+  const details = String(error?.stack || error?.message || error);
+  const isBadSkinPayload =
+    error?.name === 'SyntaxError' && details.includes('extractSkinInformation') && details.includes('JSON.parse');
+
+  if (isBadSkinPayload) {
+    console.warn('⚠️ Поймана ошибка парсинга скина от сервера, запускаю переподключение...');
+    console.warn(details);
+    forceReconnect('skin_parse_error');
+    return;
+  }
+
+  console.error('❌ Необработанная ошибка процесса:');
+  console.error(details);
+  forceReconnect('uncaught_exception');
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ Необработанный promise reject:');
+  console.error(reason);
+});
+
 createBot();
