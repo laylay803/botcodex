@@ -11,12 +11,13 @@
 - автоматически пытается исправлять некорректный skin JSON в пакетах сервера (чтобы не падать на `extractSkinInformation`);
 - отслеживает вход определённых игроков из `tracked_players.txt` и отправляет уведомление в Telegram;
 - пересылает чат Minecraft в Discord с более аккуратным форматированием;
-- принимает управляющие команды в Discord и Minecraft:
+- принимает управляющие команды в Discord:
   - `@stop` — остановить бота;
   - `@start` — запустить бота;
   - `@restart` — перезапустить бота;
   - `@tab` — отправить PNG с текущим TAB-списком игроков в Discord;
-- не отправляет эти управляющие команды из Discord в Minecraft чат.
+- в Minecraft выполняет только `@restart` и только от ников из `restart_players.txt`;
+- не отправляет управляющие команды из Discord в Minecraft чат.
 
 ## 1) Установка
 
@@ -38,12 +39,12 @@ cp .env.example .env
 - `MC_PASSWORD` — пароль (если нужен премиум-аккаунт).
 - `DISCORD_TOKEN`, `DISCORD_CHANNEL_ID` — для моста Discord.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — для уведомлений в Telegram.
-- `RESTART_PLAYERS_FILE` — файл с никами, которым разрешены `@stop/@start/@restart/@tab` из Minecraft-чата.
+- `RESTART_PLAYERS_FILE` — файл с никами, которым разрешён `@restart` из Minecraft-чата.
 
 3. Добавьте ники:
 
 - в `tracked_players.txt` — кого отслеживать для уведомлений в Telegram;
-- в `restart_players.txt` — кто может давать управляющие команды из Minecraft.
+- в `restart_players.txt` — кто может давать `@restart` в Minecraft.
 
 ## 3) Запуск
 

@@ -363,6 +363,23 @@ function parseControlCommand(text) {
   return null;
 }
 
+function extractPlayerAndCommand(rawMessage) {
+  const commandMatch = rawMessage.match(/@(restart|start|stop|tab)\b/i);
+  if (!commandMatch) return null;
+
+  const command = commandMatch[1].toLowerCase();
+
+  const arrowIndex = rawMessage.search(/(?:➜|->|→|»)/);
+  if (arrowIndex === -1) return null;
+
+  const leftPart = rawMessage.slice(0, arrowIndex);
+  const nickMatches = leftPart.match(/[A-Za-z0-9_]{3,16}/g);
+  if (!nickMatches || !nickMatches.length) return null;
+
+  const username = nickMatches[nickMatches.length - 1];
+  return { username, command };
+}
+
 async function runControlCommand(command, sourceLabel) {
   if (command === 'stop') return stopBot(sourceLabel);
   if (command === 'start') return startBot(sourceLabel);
@@ -467,16 +484,15 @@ function createBot() {
     if (joinMatch) {
       handlePlayerJoin(joinMatch[1]);
     }
+
+    const control = extractPlayerAndCommand(text);
+    if (control && control.command === 'restart' && restartPlayers.has(control.username)) {
+      runControlCommand('restart', `Minecraft: ${control.username}`);
+    }
   });
 
   bot.on('chat', (username, message) => {
     if (username === bot.username) return;
-
-    const command = parseControlCommand(message);
-    if (command && restartPlayers.has(username)) {
-      runControlCommand(command, `Minecraft: ${username}`);
-      return;
-    }
 
     const line = `💬 ${username}: ${message}`;
     console.log(line);
