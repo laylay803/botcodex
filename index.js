@@ -5,7 +5,14 @@ const path = require('path');
 const readline = require('readline');
 const mineflayer = require('mineflayer');
 const TelegramBot = require('node-telegram-bot-api');
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const Jimp = require('jimp');
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  EmbedBuilder,
+  AttachmentBuilder,
+} = require('discord.js');
 
 const cfg = {
   mcHost: process.env.MC_HOST || 'mc.masedworld.net',
@@ -17,6 +24,7 @@ const cfg = {
   joinDelayMs: Number(process.env.MC_JOIN_DELAY_MS || 3000),
   reconnectDelayMs: Number(process.env.MC_RECONNECT_DELAY_MS || 10000),
   trackedPlayersFile: process.env.TRACKED_PLAYERS_FILE || 'tracked_players.txt',
+  restartPlayersFile: process.env.RESTART_PLAYERS_FILE || 'restart_players.txt',
 
   discordToken: process.env.DISCORD_TOKEN,
   discordChannelId: process.env.DISCORD_CHANNEL_ID,
@@ -31,17 +39,23 @@ if (!cfg.mcUsername) {
 }
 
 const trackedPlayersPath = path.resolve(process.cwd(), cfg.trackedPlayersFile);
+const restartPlayersPath = path.resolve(process.cwd(), cfg.restartPlayersFile);
 let trackedPlayers = new Set();
+let restartPlayers = new Set();
+
+function readNickList(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  return new Set(
+    raw
+      .split(/\r?\n/)
+      .map((v) => v.trim())
+      .filter((v) => v && !v.startsWith('#'))
+  );
+}
 
 function loadTrackedPlayers() {
   try {
-    const raw = fs.readFileSync(trackedPlayersPath, 'utf8');
-    trackedPlayers = new Set(
-      raw
-        .split(/\r?\n/)
-        .map((v) => v.trim())
-        .filter((v) => v && !v.startsWith('#'))
-    );
+    trackedPlayers = readNickList(trackedPlayersPath);
     console.log(`📋 Загружено отслеживаемых игроков: ${trackedPlayers.size}`);
   } catch (error) {
     console.warn(`⚠️ Не удалось прочитать ${cfg.trackedPlayersFile}: ${error.message}`);
@@ -49,13 +63,29 @@ function loadTrackedPlayers() {
   }
 }
 
+function loadRestartPlayers() {
+  try {
+    restartPlayers = readNickList(restartPlayersPath);
+    console.log(`♻️ Загружено игроков с правом @restart: ${restartPlayers.size}`);
+  } catch (error) {
+    console.warn(`⚠️ Не удалось прочитать ${cfg.restartPlayersFile}: ${error.message}`);
+    restartPlayers = new Set();
+  }
+}
+
 loadTrackedPlayers();
-if (fs.existsSync(trackedPlayersPath)) {
-  fs.watchFile(trackedPlayersPath, { interval: 1000 }, () => {
-    console.log('🔄 Файл отслеживаемых игроков изменился, перезагружаю...');
-    loadTrackedPlayers();
+loadRestartPlayers();
+
+function watchListFile(filePath, label, loader) {
+  if (!fs.existsSync(filePath)) return;
+  fs.watchFile(filePath, { interval: 1000 }, () => {
+    console.log(`🔄 ${label} изменился, перезагружаю...`);
+    loader();
   });
 }
+
+watchListFile(trackedPlayersPath, 'Файл отслеживаемых игроков', loadTrackedPlayers);
+watchListFile(restartPlayersPath, 'Файл игроков с правом рестарта', loadRestartPlayers);
 
 const telegram = cfg.telegramToken ? new TelegramBot(cfg.telegramToken, { polling: false }) : null;
 
@@ -80,6 +110,7 @@ let reconnectTimer = null;
 let stdinInterface = null;
 let spawnCount = 0;
 let hasJoinedTargetServer = false;
+let isStoppedManually = false;
 const onlinePlayers = new Set();
 
 function nowStamp() {
@@ -120,26 +151,58 @@ function sanitizeSkinPropertiesInPlayerInfoPacket(packet) {
   }
 }
 
+function clearReconnectTimer() {
+  if (!reconnectTimer) return;
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+}
+
 function forceReconnect(reason) {
   if (bot) {
     try {
       bot.quit(reason);
     } catch (_error) {
-      // ignore and fallback to end
+      // ignore and fallback to schedule
     }
   }
   scheduleReconnect(reason);
 }
 
-async function sendDiscord(text) {
-  if (!discordClient || !cfg.discordChannelId) return;
+async function getDiscordChannel() {
+  if (!discordClient || !cfg.discordChannelId) return null;
   try {
     const channel = await discordClient.channels.fetch(cfg.discordChannelId);
-    if (!channel || !channel.isTextBased()) return;
-    await channel.send(text.slice(0, 1900));
+    return channel && channel.isTextBased() ? channel : null;
+  } catch (error) {
+    console.warn(`⚠️ Discord channel fetch failed: ${error.message}`);
+    return null;
+  }
+}
+
+async function sendDiscord(content) {
+  const channel = await getDiscordChannel();
+  if (!channel) return;
+
+  try {
+    if (typeof content === 'string') {
+      await channel.send(content.slice(0, 1900));
+      return;
+    }
+
+    await channel.send(content);
   } catch (error) {
     console.warn(`⚠️ Discord send failed: ${error.message}`);
   }
+}
+
+async function sendDiscordEvent(title, color, description) {
+  const embed = new EmbedBuilder()
+    .setTitle(title)
+    .setColor(color)
+    .setDescription(description)
+    .setFooter({ text: `BotCodex • ${nowStamp()}` });
+
+  await sendDiscord({ embeds: [embed] });
 }
 
 function setupTerminalInput() {
@@ -174,9 +237,9 @@ function shouldTryJoinServer(message) {
 }
 
 function joinTargetServer(reason = 'auto') {
-  if (!bot) return;
+  if (!bot || isStoppedManually) return;
   setTimeout(() => {
-    if (!bot) return;
+    if (!bot || isStoppedManually) return;
     try {
       bot.chat(cfg.targetServerCommand);
       hasJoinedTargetServer = true;
@@ -188,12 +251,123 @@ function joinTargetServer(reason = 'auto') {
 }
 
 function scheduleReconnect(reason) {
+  if (isStoppedManually) {
+    console.log(`⏸️ Реконнект отменён: бот остановлен вручную. Причина отключения: ${reason}`);
+    return;
+  }
+
   if (reconnectTimer) return;
   console.log(`🔁 Переподключение через ${cfg.reconnectDelayMs}ms. Причина: ${reason}`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     createBot();
   }, cfg.reconnectDelayMs);
+}
+
+async function stopBot(source) {
+  isStoppedManually = true;
+  clearReconnectTimer();
+
+  if (bot) {
+    try {
+      bot.quit('manual_stop');
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  bot = null;
+  await sendDiscordEvent('⏹️ Бот остановлен', 0xed4245, `Источник: ${source}`);
+}
+
+async function startBot(source) {
+  if (bot) {
+    await sendDiscordEvent('ℹ️ Бот уже запущен', 0x5865f2, `Источник: ${source}`);
+    return;
+  }
+
+  isStoppedManually = false;
+  clearReconnectTimer();
+  createBot();
+  await sendDiscordEvent('▶️ Запуск бота', 0x57f287, `Источник: ${source}`);
+}
+
+async function restartBot(source) {
+  isStoppedManually = false;
+  clearReconnectTimer();
+
+  if (bot) {
+    try {
+      bot.quit('manual_restart');
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  bot = null;
+  createBot();
+  await sendDiscordEvent('🔁 Перезапуск бота', 0xfaa61a, `Источник: ${source}`);
+}
+
+async function createTabScreenshotBuffer() {
+  const names = Object.keys(bot?.players || {})
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, 'ru'));
+
+  const title = `TAB (${names.length})`;
+  const lines = [title, ...names];
+
+  const font = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+  const lineHeight = 20;
+  const padding = 20;
+  const width = 760;
+  const height = padding * 2 + lines.length * lineHeight;
+
+  const image = new Jimp(width, Math.max(120, height), 0x101317ff);
+
+  image.print(font, padding, 10, `Minecraft tab-list • ${new Date().toLocaleString('ru-RU')}`);
+
+  lines.forEach((line, index) => {
+    const prefix = index === 0 ? '📋 ' : `${String(index).padStart(2, '0')}. `;
+    image.print(font, padding, padding + 20 + index * lineHeight, `${prefix}${line}`);
+  });
+
+  return image.getBufferAsync(Jimp.MIME_PNG);
+}
+
+async function sendTabToDiscord(source) {
+  if (!bot) {
+    await sendDiscordEvent('⚠️ TAB недоступен', 0xfee75c, `Бот не подключён. Источник: ${source}`);
+    return;
+  }
+
+  try {
+    const png = await createTabScreenshotBuffer();
+    const attachment = new AttachmentBuilder(png, { name: `tab-${Date.now()}.png` });
+    await sendDiscord({
+      content: `📸 TAB-скриншот (${source})`,
+      files: [attachment],
+    });
+  } catch (error) {
+    console.warn(`⚠️ Не удалось создать TAB-изображение: ${error.message}`);
+    await sendDiscordEvent('❌ Ошибка TAB', 0xed4245, `Не удалось собрать PNG: ${error.message}`);
+  }
+}
+
+function parseControlCommand(text) {
+  const cmd = text.trim().toLowerCase();
+  if (cmd === '@stop') return 'stop';
+  if (cmd === '@start') return 'start';
+  if (cmd === '@restart') return 'restart';
+  if (cmd === '@tab') return 'tab';
+  return null;
+}
+
+async function runControlCommand(command, sourceLabel) {
+  if (command === 'stop') return stopBot(sourceLabel);
+  if (command === 'start') return startBot(sourceLabel);
+  if (command === 'restart') return restartBot(sourceLabel);
+  if (command === 'tab') return sendTabToDiscord(sourceLabel);
 }
 
 function setupDiscordBridge() {
@@ -203,13 +377,20 @@ function setupDiscordBridge() {
     console.log(`🤖 Discord bot запущен как ${discordClient.user.tag}`);
   });
 
-  discordClient.on('messageCreate', (msg) => {
+  discordClient.on('messageCreate', async (msg) => {
     if (msg.author.bot) return;
     if (msg.channelId !== cfg.discordChannelId) return;
-    if (!bot) return;
 
     const text = msg.content.trim();
     if (!text) return;
+
+    const command = parseControlCommand(text);
+    if (command) {
+      await runControlCommand(command, `Discord: ${msg.author.tag}`);
+      return;
+    }
+
+    if (!bot) return;
 
     try {
       bot.chat(text);
@@ -250,7 +431,7 @@ function createBot() {
 
   bot.once('login', () => {
     console.log(`✅ Успешный вход в Minecraft как ${cfg.mcUsername}`);
-    sendDiscord(`🟢 Бот зашел [${nowStamp()}]`);
+    sendDiscordEvent('🟢 Бот в сети', 0x57f287, `Аккаунт: **${cfg.mcUsername}**`);
   });
 
   if (bot._client?.prependListener) {
@@ -276,7 +457,7 @@ function createBot() {
     if (!text) return;
 
     console.log(`[MC] ${text}`);
-    sendDiscord(`✉️ [${nowStamp()}] ${text}`);
+    sendDiscord(`💬 **[${nowStamp()}]** ${text}`);
 
     if (!hasJoinedTargetServer && shouldTryJoinServer(text)) {
       joinTargetServer('detected_lobby');
@@ -290,9 +471,16 @@ function createBot() {
 
   bot.on('chat', (username, message) => {
     if (username === bot.username) return;
+
+    const command = parseControlCommand(message);
+    if (command && restartPlayers.has(username)) {
+      runControlCommand(command, `Minecraft: ${username}`);
+      return;
+    }
+
     const line = `💬 ${username}: ${message}`;
     console.log(line);
-    sendDiscord(`✉️ [${nowStamp()}] ${line}`);
+    sendDiscord(`💬 **[${nowStamp()}] ${username}:** ${message}`);
   });
 
   bot.on('playerJoined', (player) => {
@@ -317,7 +505,7 @@ function createBot() {
 
   bot.on('end', (reason) => {
     console.warn(`⚠️ Соединение завершено: ${reason}`);
-    sendDiscord(`🔴 Бот отключился [${nowStamp()}] Причина: ${reason}`);
+    sendDiscordEvent('🔴 Бот отключился', 0xed4245, `Причина: ${reason || 'unknown'}`);
     scheduleReconnect('end');
   });
 }
