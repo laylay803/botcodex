@@ -111,6 +111,7 @@ let stdinInterface = null;
 let spawnCount = 0;
 let hasJoinedTargetServer = false;
 let isStoppedManually = false;
+let isRestartRequested = false;
 const onlinePlayers = new Set();
 
 function nowStamp() {
@@ -266,6 +267,7 @@ function scheduleReconnect(reason) {
 
 async function stopBot(source) {
   isStoppedManually = true;
+  isRestartRequested = false;
   clearReconnectTimer();
 
   if (bot) {
@@ -287,6 +289,7 @@ async function startBot(source) {
   }
 
   isStoppedManually = false;
+  isRestartRequested = false;
   clearReconnectTimer();
   createBot();
   await sendDiscordEvent('▶️ Запуск бота', 0x57f287, `Источник: ${source}`);
@@ -294,6 +297,7 @@ async function startBot(source) {
 
 async function restartBot(source) {
   isStoppedManually = false;
+  isRestartRequested = true;
   clearReconnectTimer();
 
   if (bot) {
@@ -304,8 +308,11 @@ async function restartBot(source) {
     }
   }
 
-  bot = null;
-  createBot();
+  if (!bot) {
+    isRestartRequested = false;
+    createBot();
+  }
+
   await sendDiscordEvent('🔁 Перезапуск бота', 0xfaa61a, `Источник: ${source}`);
 }
 
@@ -522,6 +529,15 @@ function createBot() {
   bot.on('end', (reason) => {
     console.warn(`⚠️ Соединение завершено: ${reason}`);
     sendDiscordEvent('🔴 Бот отключился', 0xed4245, `Причина: ${reason || 'unknown'}`);
+
+    if (reason === 'manual_restart' && isRestartRequested) {
+      isRestartRequested = false;
+      bot = null;
+      createBot();
+      return;
+    }
+
+    bot = null;
     scheduleReconnect('end');
   });
 }
