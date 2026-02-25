@@ -113,6 +113,8 @@ let hasJoinedTargetServer = false;
 let isStoppedManually = false;
 let isRestartRequested = false;
 const onlinePlayers = new Set();
+let lastMcControlAt = 0;
+let lastMcControlKey = '';
 
 function nowStamp() {
   return new Date().toLocaleTimeString('ru-RU', { hour12: false });
@@ -393,6 +395,24 @@ function extractPlayerAndCommand(rawMessage) {
   return { username, command };
 }
 
+
+function runMinecraftControlCommand(command, username, sourceText = '') {
+  if (!(command === 'restart' || command === 'start')) return;
+  if (!restartPlayers.has(username)) return;
+
+  const normalizedSource = sourceText.replace(/\s+/g, ' ').trim().slice(0, 120);
+  const key = `${username}|${command}|${normalizedSource}`;
+  const now = Date.now();
+
+  if (lastMcControlKey === key && now - lastMcControlAt < 2000) {
+    return;
+  }
+
+  lastMcControlKey = key;
+  lastMcControlAt = now;
+  runControlCommand(command, `Minecraft: ${username}`);
+}
+
 async function runControlCommand(command, sourceLabel) {
   if (command === 'stop') return stopBot(sourceLabel);
   if (command === 'start') return startBot(sourceLabel);
@@ -499,13 +519,18 @@ function createBot() {
     }
 
     const control = extractPlayerAndCommand(text);
-    if (control && restartPlayers.has(control.username) && (control.command === 'restart' || control.command === 'start')) {
-      runControlCommand(control.command, `Minecraft: ${control.username}`);
+    if (control) {
+      runMinecraftControlCommand(control.command, control.username, text);
     }
   });
 
   bot.on('chat', (username, message) => {
     if (username === bot.username) return;
+
+    const directCommand = parseControlCommand(message);
+    if (directCommand) {
+      runMinecraftControlCommand(directCommand, username, message);
+    }
 
     const line = `💬 ${username}: ${message}`;
     console.log(line);
