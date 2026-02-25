@@ -218,6 +218,12 @@ function setupTerminalInput() {
     const text = line.trim();
     if (!text) return;
 
+    const localCommand = parseControlCommand(text);
+    if (localCommand) {
+      runControlCommand(localCommand, 'Terminal');
+      return;
+    }
+
     if (!bot || !bot.chat) {
       console.log('⚠️ Бот ещё не подключён к Minecraft');
       return;
@@ -371,15 +377,15 @@ function parseControlCommand(text) {
 }
 
 function extractPlayerAndCommand(rawMessage) {
-  const commandMatch = rawMessage.match(/@(restart|start|stop|tab)\b/i);
-  if (!commandMatch) return null;
+  const cleaned = rawMessage.replace(/§[0-9A-FK-OR]/gi, '');
+  const commandMatch = cleaned.match(/@(restart|start|stop|tab)\b/i);
+  if (!commandMatch || typeof commandMatch.index !== 'number') return null;
 
   const command = commandMatch[1].toLowerCase();
+  const leftPart = cleaned.slice(0, commandMatch.index);
 
-  const arrowIndex = rawMessage.search(/(?:➜|->|→|»)/);
-  if (arrowIndex === -1) return null;
+  if (!/(?:➜|->|→|»|:)/.test(leftPart)) return null;
 
-  const leftPart = rawMessage.slice(0, arrowIndex);
   const nickMatches = leftPart.match(/[A-Za-z0-9_]{3,16}/g);
   if (!nickMatches || !nickMatches.length) return null;
 
@@ -493,8 +499,8 @@ function createBot() {
     }
 
     const control = extractPlayerAndCommand(text);
-    if (control && control.command === 'restart' && restartPlayers.has(control.username)) {
-      runControlCommand('restart', `Minecraft: ${control.username}`);
+    if (control && restartPlayers.has(control.username) && (control.command === 'restart' || control.command === 'start')) {
+      runControlCommand(control.command, `Minecraft: ${control.username}`);
     }
   });
 

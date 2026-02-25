@@ -16,7 +16,7 @@
   - `@start` — запустить бота;
   - `@restart` — перезапустить бота;
   - `@tab` — отправить PNG с текущим TAB-списком игроков в Discord;
-- в Minecraft выполняет только `@restart` и только от ников из `restart_players.txt`;
+- в Minecraft выполняет `@restart` и `@start` от ников из `restart_players.txt`;
 - не отправляет управляющие команды из Discord в Minecraft чат.
 
 ## 1) Установка
@@ -39,12 +39,12 @@ cp .env.example .env
 - `MC_PASSWORD` — пароль (если нужен премиум-аккаунт).
 - `DISCORD_TOKEN`, `DISCORD_CHANNEL_ID` — для моста Discord.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — для уведомлений в Telegram.
-- `RESTART_PLAYERS_FILE` — файл с никами, которым разрешён `@restart` из Minecraft-чата.
+- `RESTART_PLAYERS_FILE` — файл с никами, которым разрешены `@restart` и `@start` из Minecraft-чата.
 
 3. Добавьте ники:
 
 - в `tracked_players.txt` — кого отслеживать для уведомлений в Telegram;
-- в `restart_players.txt` — кто может давать `@restart` в Minecraft.
+- в `restart_players.txt` — кто может давать `@restart` и `@start` в Minecraft.
 
 ## 3) Запуск
 
